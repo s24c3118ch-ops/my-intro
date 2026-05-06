@@ -3,72 +3,218 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MZ | Portfolio</title>
-    <meta name="description" content="MZの自己紹介ページです。">
-    <!-- Google Fonts の読み込み -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Noto+Sans+JP:wght@300;400;700&display=swap" rel="stylesheet">
+    <title>AWS CLF 攻略ダッシュボード</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="blob-bg"></div>
-    <header class="hero section-hidden" id="about">
-        <div class="hero-content">
-            <div class="profile-img-container">
-                <img src="avatar.png" alt="MZ Profile Picture" class="profile-img">
+    <div class="app-container">
+        <!-- サイドバー -->
+        <nav class="sidebar">
+            <div class="logo">
+                <h1><i class="fa-brands fa-aws"></i> CLF WIKI</h1>
             </div>
-            <div class="intro-text">
-                <h1>Hello, I'm <span class="highlight">MZ</span></h1>
-                <p class="subtitle">AI & CG Enthusiast</p>
-                <div class="skills">
-                    <div class="skill-tag">じっくりと物事を考えること</div>
-                    <div class="skill-tag">AI</div>
-                    <div class="skill-tag">CG</div>
+            <ul class="nav-links">
+                <li class="active" data-target="dashboard"><i class="fa-solid fa-chart-line"></i> ダッシュボード</li>
+                <li data-target="dictionary"><i class="fa-solid fa-book-journal-whills"></i> 用語図鑑</li>
+                <li data-target="quiz"><i class="fa-solid fa-gamepad"></i> AIクイズ道場</li>
+                <li data-target="logs"><i class="fa-solid fa-ranking-star"></i> 学習ログ</li>
+                <li data-target="settings"><i class="fa-solid fa-gear"></i> 設定</li>
+            </ul>
+        </nav>
+
+        <!-- メインコンテンツ -->
+        <main class="main-content">
+            <!-- ダッシュボード画面 -->
+            <section id="dashboard" class="view active-view">
+                <header class="view-header">
+                    <h2><i class="fa-solid fa-chart-line"></i> Dashboard</h2>
+                    <div class="countdown-panel">
+                        <span class="glitch-text" data-text="試験日まで">試験日まで</span>
+                        <div class="days-left" id="days-left-display">-- 日</div>
+                    </div>
+                </header>
+                <div class="dashboard-grid">
+                    <!-- ストリーク -->
+                    <div class="cyber-card streak-card">
+                        <h3><i class="fa-solid fa-fire"></i> 学習ストリーク</h3>
+                        <div class="streak-value"><span id="streak-count">0</span> Days</div>
+                        <p>継続は力なり。毎日ログインして用語を覚えよう！</p>
+                    </div>
+                    <!-- 学習タイマー -->
+                    <div class="cyber-card timer-card">
+                        <h3><i class="fa-solid fa-stopwatch"></i> 学習タイマー</h3>
+                        <div class="timer-display glitch-text" id="study-timer" style="font-size: 2.5rem; text-align: center; color: var(--cyber-blue); margin: 10px 0; text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);">00:00:00</div>
+                        <div style="display: flex; gap: 10px; margin-top: 10px;">
+                            <button id="btn-timer-start" class="cyber-btn" style="flex:1; padding: 0.5rem;"><i class="fa-solid fa-play"></i> START</button>
+                            <button id="btn-timer-stop" class="cyber-btn" style="flex:1; padding: 0.5rem; border-color: var(--cyber-red); color: var(--cyber-red);" disabled><i class="fa-solid fa-stop"></i> STOP</button>
+                        </div>
+                        <p class="text-muted" style="margin-top: 10px; font-size: 0.8rem; text-align: center;">ストップを押すと今日の学習時間に加算されます。</p>
+                    </div>
+                    <!-- マイルストーン -->
+                    <div class="cyber-card milestone-card">
+                        <h3><i class="fa-solid fa-flag-checkered"></i> 1ヶ月マイルストーン</h3>
+                        <ul class="milestone-list">
+                            <li><input type="checkbox" id="ms1"><label for="ms1">第1週: 基礎知識・クラウドの概念理解</label></li>
+                            <li><input type="checkbox" id="ms2"><label for="ms2">第2週: セキュリティとアーキテクチャ</label></li>
+                            <li><input type="checkbox" id="ms3"><label for="ms3">第3週: Udemy模試 1〜3回クリア</label></li>
+                            <li><input type="checkbox" id="ms4"><label for="ms4">第4週: Udemy模試 4〜6回＆弱点補強</label></li>
+                        </ul>
+                    </div>
+                    <!-- 復習アラート -->
+                    <div class="cyber-card review-card" style="grid-column: span 2;">
+                        <h3><i class="fa-solid fa-bell"></i> 本日の復習ミッション</h3>
+                        <div id="review-list" class="term-grid">
+                            <!-- 復習すべき単語がここに表示される -->
+                            <p class="text-muted">本日の復習ミッションはクリアしました！</p>
+                        </div>
+                    </div>
                 </div>
-            </div>
-        </div>
-        <div class="scroll-indicator">
-            <div class="mouse"></div>
-        </div>
-    </header>
+            </section>
 
-    <main>
-        <section class="info-section section-hidden" id="concept">
-            <div class="container">
-                <div class="card">
-                    <div class="card-icon">🧠</div>
-                    <h2>自分にとってAIとは？</h2>
-                    <p>生活や学習面での疑問をサポートしてくれる、<strong>「相談役」</strong>のような存在です。いつでもどこでも頼りになるパートナーだと思っています。</p>
+            <!-- 用語図鑑画面 -->
+            <section id="dictionary" class="view">
+                <header class="view-header">
+                    <h2><i class="fa-solid fa-book-journal-whills"></i> AWS Dictionary</h2>
+                </header>
+                <div class="cyber-card add-term-form">
+                    <h3>新しい用語の登録</h3>
+                    <div class="form-group">
+                        <input type="text" id="new-term-name" placeholder="用語名 (例: EC2, S3, IAM)">
+                        <input type="text" id="new-term-ref" placeholder="黒本の参照ページ (例: P.120)">
+                        <button id="btn-add-term" class="cyber-btn"><i class="fa-solid fa-plus"></i> AIに解説を生成させる</button>
+                    </div>
+                    <div id="term-loading" class="loading-indicator hidden">
+                        <i class="fa-solid fa-circle-notch fa-spin"></i> AIが通信プロトコルを確立・要約中...
+                    </div>
                 </div>
-            </div>
-        </section>
-
-        <section class="info-section section-hidden" id="future">
-            <div class="container">
-                <div class="card highlight-card">
-                    <div class="card-icon">🗣️</div>
-                    <h2>今後AIとどう向き合いたいか</h2>
-                    <p>どのような言葉で問いかければAIがより的確に要望に答えてくれるのかを、<strong>実際に使いながら検証</strong>していきたいです。効果的なプロンプトのあり方を常に探求します。</p>
+                <div class="dictionary-container">
+                    <div class="search-bar" style="display: flex; gap: 1rem;">
+                        <input type="text" id="search-term" placeholder="用語を検索...">
+                        <select id="category-filter" style="background-color: var(--bg-color); color: var(--text-main); border: 1px solid var(--border-color); padding: 0.8rem; border-radius: 4px; font-family: var(--font-body); outline: none;">
+                            <option value="all">すべてのカテゴリ</option>
+                            <option value="Compute">Compute</option>
+                            <option value="Storage">Storage</option>
+                            <option value="Database">Database</option>
+                            <option value="Network">Network</option>
+                            <option value="Security">Security</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div id="dictionary-list" class="term-grid">
+                        <!-- 用語カードがここに追加される -->
+                    </div>
                 </div>
-            </div>
-        </section>
+            </section>
 
-        <section class="info-section section-hidden" id="goal">
-            <div class="container">
-                <div class="card">
-                    <div class="card-icon">🚀</div>
-                    <h2>この授業を通して挑戦したいこと</h2>
-                    <p>私の<strong>「勉強をサポートしてくれるアプリ」</strong>を作りたいです。学んだ知識を活かして、実用的で役立つツールを開発することが目標です。</p>
+            <!-- 学習ログ画面 -->
+            <section id="logs" class="view">
+                <header class="view-header">
+                    <h2><i class="fa-solid fa-ranking-star"></i> Udemy Mock Exam Logs</h2>
+                </header>
+                <div class="dashboard-grid">
+                    <!-- 学習時間グラフ -->
+                    <div class="cyber-card chart-container" style="grid-column: span 2;">
+                        <h3>直近7日間の学習時間 (分)</h3>
+                        <canvas id="studyTimeChart" style="max-height: 250px;"></canvas>
+                    </div>
+                    <!-- 模試スコアグラフ -->
+                    <div class="cyber-card chart-container" style="grid-column: span 2;">
+                        <h3>模試スコア推移 (目標 700点以上)</h3>
+                        <canvas id="scoreChart"></canvas>
+                    </div>
+                    <div class="cyber-card input-score-card" style="grid-column: span 2;">
+                        <h3>スコアの記録</h3>
+                        <div class="score-inputs">
+                            <div class="input-group"><label>第1回</label><input type="number" id="score-1" min="0" max="1000"></div>
+                            <div class="input-group"><label>第2回</label><input type="number" id="score-2" min="0" max="1000"></div>
+                            <div class="input-group"><label>第3回</label><input type="number" id="score-3" min="0" max="1000"></div>
+                            <div class="input-group"><label>第4回</label><input type="number" id="score-4" min="0" max="1000"></div>
+                            <div class="input-group"><label>第5回</label><input type="number" id="score-5" min="0" max="1000"></div>
+                            <div class="input-group"><label>第6回</label><input type="number" id="score-6" min="0" max="1000"></div>
+                        </div>
+                        <button id="btn-save-scores" class="cyber-btn mt-2">スコアを保存してグラフを更新</button>
+                    </div>
+                    
+                    <!-- 分野別スコアとレーダーチャート -->
+                    <div class="cyber-card radar-chart-container" style="grid-column: span 1;">
+                        <h3>分野別 理解度 (0〜100%)</h3>
+                        <canvas id="radarChart"></canvas>
+                    </div>
+                    <div class="cyber-card input-radar-card" style="grid-column: span 1;">
+                        <h3>分野別スコアの記録</h3>
+                        <div class="score-inputs">
+                            <div class="input-group"><label>クラウドの概念</label><input type="number" id="radar-1" min="0" max="100"></div>
+                            <div class="input-group"><label>セキュリティ</label><input type="number" id="radar-2" min="0" max="100"></div>
+                            <div class="input-group"><label>テクノロジー</label><input type="number" id="radar-3" min="0" max="100"></div>
+                            <div class="input-group"><label>請求と料金</label><input type="number" id="radar-4" min="0" max="100"></div>
+                        </div>
+                        <button id="btn-save-radar" class="cyber-btn mt-2">分野別スコアを保存</button>
+                    </div>
                 </div>
-            </div>
-        </section>
-    </main>
+            </section>
 
-    <footer>
-        <p>&copy; 2026 MZ - Personal Portfolio</p>
-    </footer>
+            <!-- AIクイズ道場画面 -->
+            <section id="quiz" class="view">
+                <header class="view-header">
+                    <h2><i class="fa-solid fa-gamepad"></i> AI Quiz Dojo</h2>
+                </header>
+                <div class="cyber-card quiz-card" style="text-align: center; max-width: 800px; margin: 0 auto;">
+                    <h3>ランダムAI生成クイズ</h3>
+                    <p class="text-muted">登録済みの用語からAIが4択クイズを出題します。</p>
+                    <button id="btn-start-quiz" class="cyber-btn mt-4" style="font-size: 1.2rem; padding: 1rem 2rem;">クイズを生成する</button>
+                    
+                    <div id="quiz-loading" class="loading-indicator hidden mt-4">
+                        <i class="fa-solid fa-circle-notch fa-spin"></i> AIが問題を生成中...
+                    </div>
 
+                    <div id="quiz-container" class="hidden mt-4" style="text-align: left;">
+                        <h4 id="quiz-question" style="font-size: 1.2rem; margin-bottom: 1.5rem; color: #fff; line-height: 1.5;"></h4>
+                        <div id="quiz-options" style="display: grid; gap: 1rem; grid-template-columns: 1fr;">
+                            <!-- 選択肢ボタンがここに追加される -->
+                        </div>
+                        <div id="quiz-result" class="mt-4 hidden" style="font-size: 1.2rem; font-weight: bold; text-align: center; padding: 1rem; border-radius: 4px;"></div>
+                        <div style="text-align: center;">
+                            <button id="btn-next-quiz" class="cyber-btn mt-4 hidden">次の問題を生成</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 設定画面 -->
+            <section id="settings" class="view">
+                <header class="view-header">
+                    <h2><i class="fa-solid fa-gear"></i> System Settings</h2>
+                </header>
+                <div class="cyber-card settings-card">
+                    <h3>AI API設定</h3>
+                    <p class="text-muted">用語の自動解説を行うためにGemini APIキーを設定してください。キーはブラウザにのみ保存されます。</p>
+                    <div class="form-group">
+                        <label for="gemini-api-key">Gemini API Key</label>
+                        <input type="password" id="gemini-api-key" placeholder="AIzaSy...">
+                    </div>
+                    
+                    <h3 class="mt-4">目標設定</h3>
+                    <div class="form-group">
+                        <label for="exam-date">試験予定日</label>
+                        <input type="date" id="exam-date">
+                    </div>
+                    
+                    <button id="btn-save-settings" class="cyber-btn mt-2">設定を保存</button>
+                    <div id="settings-msg" class="success-msg hidden">保存しました！</div>
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Custom JS -->
     <script src="script.js"></script>
 </body>
 </html>
