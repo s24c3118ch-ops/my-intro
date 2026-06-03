@@ -821,35 +821,91 @@ function initSpeechRecognition() {
     return rec;
 }
 
-// AIコーチの音声発話 (TTS)
-function speakText(text) {
-    window.speechSynthesis.cancel(); // 進行中の発話をキャンセル
+// 再生中のAudioオブジェクト（停止用）
+let currentAudio = null;
 
-    if (muteVoiceCheckbox.checked) {
-        // ミュート状態の場合は、話し終わった後の自動マイクオンのみ実行
+// AIコーチの音声発話 - OpenAI TTS優先、フォールバックはブラウザTTS
+async function speakText(text) {
+    stopSpeaking();
+
+    if (muteVoiceCheckbox && muteVoiceCheckbox.checked) {
         setTimeout(() => {
-            if (autoMicCheckbox.checked && recognition) {
-                try { recognition.start(); } catch (e) { console.warn(e); }
+            if (autoMicCheckbox && autoMicCheckbox.checked && recognition) {
+                try { recognition.start(); } catch (e) {}
             }
-        }, 1000);
+        }, 500);
         return;
     }
 
+    if (appData.settings.apiKey) {
+        await speakWithOpenAI(text);
+    } else {
+        speakWithBrowser(text);
+    }
+}
+
+async function speakWithOpenAI(text) {
     avatarWrapper.classList.add('speaking');
     avatarWrapper.classList.remove('listening');
     coachStatus.textContent = '発話中...';
 
+    try {
+        const response = await fetch('https://api.openai.com/v1/audio/speech', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${appData.settings.apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'tts-1',
+                input: text,
+                voice: 'nova',  // 自然な女性音声（日本語対応）
+                speed: 1.1
+            })
+        });
+
+        if (!response.ok) throw new Error('TTS API error');
+
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        currentAudio = new Audio(audioUrl);
+
+        currentAudio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            currentAudio = null;
+            avatarWrapper.classList.remove('speaking');
+            coachStatus.textContent = '待機中';
+            if (autoMicCheckbox && autoMicCheckbox.checked && recognition) {
+                try { recognition.start(); } catch (e) {}
+            }
+        };
+
+        currentAudio.onerror = () => {
+            avatarWrapper.classList.remove('speaking');
+            coachStatus.textContent = '待機中';
+        };
+
+        await currentAudio.play();
+    } catch (e) {
+        console.warn('OpenAI TTS失敗、ブラウザTTSにフォールバック:', e);
+        speakWithBrowser(text);
+    }
+}
+
+function speakWithBrowser(text) {
+    window.speechSynthesis.cancel();
+    avatarWrapper.classList.add('speaking');
+    coachStatus.textContent = '発話中...';
+
     coachUtterance = new SpeechSynthesisUtterance(text);
     coachUtterance.lang = 'ja-JP';
-    coachUtterance.rate = 1.0;    // 普通の人間の速さ
-    coachUtterance.pitch = 1.1;   // 少し明るいトーン
+    coachUtterance.rate = 1.15;
+    coachUtterance.pitch = 1.05;
 
-    // 日本語の自然な音声を優先順位付きで選択
     const voices = window.speechSynthesis.getVoices();
     const preferredVoice =
-        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Otoya')) ||   // 男性（自然）
-        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Kyoko')) ||   // 女性
-        voices.find(v => v.lang === 'ja-JP' && !v.name.includes('(')) ||      // 括弧なし＝ローカル音声優先
+        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Otoya')) ||
+        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Kyoko')) ||
         voices.find(v => v.lang === 'ja-JP') ||
         voices.find(v => v.lang.includes('ja'));
     if (preferredVoice) coachUtterance.voice = preferredVoice;
@@ -857,12 +913,10 @@ function speakText(text) {
     coachUtterance.onend = () => {
         avatarWrapper.classList.remove('speaking');
         coachStatus.textContent = '待機中';
-        // 発話終了後に自動マイク起動チェック
-        if (autoMicCheckbox.checked && recognition) {
-            try { recognition.start(); } catch (e) { console.warn(e); }
+        if (autoMicCheckbox && autoMicCheckbox.checked && recognition) {
+            try { recognition.start(); } catch (e) {}
         }
     };
-
     coachUtterance.onerror = () => {
         avatarWrapper.classList.remove('speaking');
         coachStatus.textContent = '待機中';
@@ -874,8 +928,12 @@ function speakText(text) {
 // 発話の強制停止
 function stopSpeaking() {
     window.speechSynthesis.cancel();
-    avatarWrapper.classList.remove('speaking');
-    coachStatus.textContent = '待機中';
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio = null;
+    }
+    if (avatarWrapper) avatarWrapper.classList.remove('speaking');
+    if (coachStatus) coachStatus.textContent = '待機中';
 }
 
 // 学習状況の要約情報をプロンプト用に取得
