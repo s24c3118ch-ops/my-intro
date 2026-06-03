@@ -841,14 +841,15 @@ function speakText(text) {
 
     coachUtterance = new SpeechSynthesisUtterance(text);
     coachUtterance.lang = 'ja-JP';
-    coachUtterance.rate = 1.15;   // 少し速め（自然な会話速度）
-    coachUtterance.pitch = 1.05;  // 少し高め（親しみやすいトーン）
+    coachUtterance.rate = 1.0;    // 普通の人間の速さ
+    coachUtterance.pitch = 1.1;   // 少し明るいトーン
 
     // 日本語の自然な音声を優先順位付きで選択
     const voices = window.speechSynthesis.getVoices();
     const preferredVoice =
-        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Kyoko')) ||
-        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Otoya')) ||
+        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Otoya')) ||   // 男性（自然）
+        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Kyoko')) ||   // 女性
+        voices.find(v => v.lang === 'ja-JP' && !v.name.includes('(')) ||      // 括弧なし＝ローカル音声優先
         voices.find(v => v.lang === 'ja-JP') ||
         voices.find(v => v.lang.includes('ja'));
     if (preferredVoice) coachUtterance.voice = preferredVoice;
