@@ -101,12 +101,14 @@ async function generateExplanationWithOpenAI(term) {
 
     try {
         const url = 'https://api.openai.com/v1/chat/completions';
-        const prompt = `あなたはAWS認定クラウドプラクティショナー試験の優秀な講師です。以下のAWS用語について解説し、さらに適切なカテゴリを分類してください。
+        const prompt = `あなたはAWS認定クラウドプラクティショナー試験の講師です。以下のAWS用語を、IT未経験の大学生でも一目でわかるように解説してください。
+
 用語: ${term}
+
 以下のJSON形式のみで出力してください：
 {
   "category": "Compute, Storage, Database, Network, Security, または Other から1つ選択",
-  "explanation": "初学者向けに「どんなサービスか」「試験で問われやすいポイント」を簡潔に（200文字程度で、見出しや箇条書きを用いて）説明したもの"
+  "explanation": "以下の構成で説明してください。\n## ひと言で言うと\n（一文で超シンプルに。身近なモノに例えるとベスト）\n## 何ができるの？\n* （箇条書き2〜3行。具体的に）\n## 試験に出るポイント\n* （箇条書き1〜2行。これだけ覚えればOKな要点）\n## 関連サービス\n（関連する他のAWSサービスを1〜3個、一行で。なければ省略）\n\n全体で250文字以内に収めてください。"
 }`;
 
         const response = await fetch(url, {
@@ -796,10 +798,17 @@ function initSpeechRecognition() {
 
     rec.onerror = (e) => {
         console.error('音声認識エラー:', e.error);
-        coachStatus.textContent = 'エラーが発生しました';
         avatarWrapper.classList.remove('listening');
         btnMic.classList.remove('recording');
         btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
+        if (e.error === 'not-allowed') {
+            coachStatus.textContent = 'マイクが許可されていません';
+            addMessageToLog('COACH', '⚠️ マイクへのアクセスが許可されていません。ブラウザのアドレスバー横の🔒アイコンをクリックして「マイク」を許可してください。または、下のテキスト入力欄から文字で話しかけてね！');
+        } else if (e.error === 'no-speech') {
+            coachStatus.textContent = '声が聞き取れませんでした';
+        } else {
+            coachStatus.textContent = `エラー: ${e.error}`;
+        }
     };
 
     rec.onresult = (event) => {
@@ -832,11 +841,17 @@ function speakText(text) {
 
     coachUtterance = new SpeechSynthesisUtterance(text);
     coachUtterance.lang = 'ja-JP';
-    
-    // 日本語の自然な音声を探す（あれば設定）
+    coachUtterance.rate = 1.15;   // 少し速め（自然な会話速度）
+    coachUtterance.pitch = 1.05;  // 少し高め（親しみやすいトーン）
+
+    // 日本語の自然な音声を優先順位付きで選択
     const voices = window.speechSynthesis.getVoices();
-    const jaVoice = voices.find(v => v.lang === 'ja-JP' || v.lang.includes('ja'));
-    if (jaVoice) coachUtterance.voice = jaVoice;
+    const preferredVoice =
+        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Kyoko')) ||
+        voices.find(v => v.lang === 'ja-JP' && v.name.includes('Otoya')) ||
+        voices.find(v => v.lang === 'ja-JP') ||
+        voices.find(v => v.lang.includes('ja'));
+    if (preferredVoice) coachUtterance.voice = preferredVoice;
 
     coachUtterance.onend = () => {
         avatarWrapper.classList.remove('speaking');
@@ -948,18 +963,15 @@ async function sendUserMessage(text) {
         const url = 'https://api.openai.com/v1/chat/completions';
         
         // 講師のキャラクターと学習コンテキストを設定
-        const systemPrompt = `あなたはAWS認定クラウドプラクティショナー(CLF)試験合格を目指すユーザーをサポートする、IT専門の個別指導塾の熱血で優しい講師（コーチ）です。
-ユーザーに寄り添い、モチベーションを高める回答をしてください。
-回答を生成する際は、以下の「ユーザーの学習データ」を必ず考慮し、データに基づいた具体的な学習アドバイスを織り交ぜてください。
-（例：学習時間が少なければ「少しでもタイマーを動かそう！」、用語数が少なければ「用語図鑑にAWSサービスを追加してみてね！」、特定の分野が低ければ「セキュリティについてクイズで復習しよう！」など）
+        const systemPrompt = `あなたはAWSクラウドプラクティショナー試験の専任コーチです。友達みたいにフランクに、でも的確にサポートしてください。
 
 ${getStudyStatsContext()}
 
-【回答のルール】
-- 親しみやすく、少し熱血で、ユーザーを応援する塾の先生口調（「〜だよ」「〜だね！」「一緒に頑張ろう！」など）で答えてください。
-- 音声合成（TTS）で読み上げるため、漢字の読み間違いが起こりにくい平易な日本語にしてください。
-- 読み上げ時間が長くなりすぎないよう、回答は「150文字から250文字程度」の短い段落にまとめてください。
-- マークダウンの箇条書きや複雑な記号は極力避け、プレーンなテキストで出力してください。`;
+【話し方のルール】
+- 友達っぽい自然なしゃべり口調で。「〜だよ」「〜じゃん」「いい感じ！」など。敬語不要。
+- 音声で読み上げるので、記号や箇条書きは使わない。文章で話す感じで。
+- 1〜3文の短い返答にまとめる。長々と説明しない。
+- ユーザーの学習データを見て、具体的な一言アドバイスを必ず入れる。`;
 
         // チャット履歴の構築 (直近10往復)
         const messages = [
