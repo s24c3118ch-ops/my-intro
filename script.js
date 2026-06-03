@@ -866,6 +866,7 @@ async function speakWithOpenAI(text) {
 
         if (!response.ok) throw new Error('TTS API error');
 
+        coachStatus.textContent = '発話中... (OpenAI)';
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
         currentAudio = new Audio(audioUrl);
@@ -888,6 +889,7 @@ async function speakWithOpenAI(text) {
         await currentAudio.play();
     } catch (e) {
         console.warn('OpenAI TTS失敗、ブラウザTTSにフォールバック:', e);
+        addMessageToLog('COACH', `⚠️ OpenAI音声エラー: ${e.message} → ブラウザ音声で代替します`);
         speakWithBrowser(text);
     }
 }
@@ -1155,16 +1157,29 @@ ${currentStats}
 function initVoiceCoach() {
     recognition = initSpeechRecognition();
 
-    btnMic.addEventListener('click', () => {
+    btnMic.addEventListener('click', async () => {
         if (!recognition) {
             alert('お使いのブラウザは音声認識に対応していません。テキスト入力をご利用ください。');
             return;
         }
         stopSpeaking();
+
+        // まずマイク許可を明示的にリクエスト（ダイアログが出る）
+        try {
+            await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err) {
+            if (err.name === 'NotAllowedError') {
+                coachStatus.textContent = 'マイクがブロックされています';
+                addMessageToLog('COACH', '⚠️ マイクへのアクセスが拒否されました。Chromeのアドレスバー左端のアイコンをクリックして、マイクを「許可」に変更してください。それまではテキスト入力を使ってね！');
+            } else {
+                addMessageToLog('COACH', 'マイクの取得に失敗しました: ' + err.message);
+            }
+            return;
+        }
+
         try {
             recognition.start();
         } catch (e) {
-            // 既に起動している場合は停止
             try { recognition.stop(); } catch (err) {}
         }
     });
