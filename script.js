@@ -1,16 +1,34 @@
 // --- データ管理 ---
 const STORAGE_KEY = 'clf_wiki_data';
-let appData = {
-    terms: [], // { id, name, ref, desc, category, createdAt, nextReviewDate }
-    scores: [null, null, null, null, null, null],
-    radarScores: [0, 0, 0, 0], // 分野別スコア
-    studyTime: {}, // 追加: { 'YYYY-MM-DD': 分 }
-    settings: {
-        apiKey: '',
-        examDate: ''
+
+const CLF_DOMAINS = [
+    {
+        id: 'domain1', label: 'ドメイン1: クラウドの概念', pct: '24%', color: 'var(--cyber-blue)',
+        topics: ['AWSの価値提案（なぜクラウドか）', 'クラウドの経済性・料金モデル', 'クラウド設計原則 (Well-Architected)', 'AWSグローバルインフラ（リージョン/AZ/エッジ）']
     },
+    {
+        id: 'domain2', label: 'ドメイン2: セキュリティとコンプライアンス', pct: '30%', color: 'var(--cyber-red)',
+        topics: ['責任共有モデル', 'IAM（ユーザー・グループ・ロール・ポリシー）', 'MFA・パスワードポリシー', 'セキュリティサービス（Shield・WAF・GuardDuty）', 'AWS Artifact / コンプライアンス']
+    },
+    {
+        id: 'domain3', label: 'ドメイン3: クラウドテクノロジーとサービス', pct: '34%', color: 'var(--aws-orange)',
+        topics: ['コンピューティング（EC2・Lambda・ECS・Fargate）', 'ストレージ（S3・EBS・EFS・Glacier）', 'データベース（RDS・DynamoDB・ElastiCache）', 'ネットワーク（VPC・CloudFront・Route53・ELB）', '管理ツール（CloudWatch・CloudTrail・Config）', 'その他主要サービス（SNS・SQS・Step Functions）']
+    },
+    {
+        id: 'domain4', label: 'ドメイン4: 請求・料金・サポート', pct: '12%', color: 'var(--cyber-green)',
+        topics: ['料金モデル（オンデマンド・リザーブド・スポット・Savings Plans）', 'コスト管理（Cost Explorer・Budgets・Cost Allocation Tags）', 'AWSサポートプラン（Basic・Developer・Business・Enterprise）', 'AWS Organizations / 一括請求']
+    }
+];
+
+let appData = {
+    terms: [],
+    scores: [null, null, null, null, null, null],
+    radarScores: [0, 0, 0, 0],
+    studyTime: {},
+    settings: { apiKey: '', examDate: '', dailyGoal: 3 },
     milestones: [false, false, false, false],
-    streak: { count: 0, lastLogin: '' }
+    streak: { count: 0, lastLogin: '' },
+    clfProgress: {}
 };
 
 // 初期ロード
@@ -18,13 +36,12 @@ function loadData() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
         appData = JSON.parse(saved);
-        // 古いデータへの互換性対応
-        if (!appData.settings) appData.settings = { apiKey: '', examDate: '' };
+        if (!appData.settings) appData.settings = { apiKey: '', examDate: '', dailyGoal: 3 };
+        if (!appData.settings.dailyGoal) appData.settings.dailyGoal = 3;
         if (!appData.studyTime) appData.studyTime = {};
         if (!appData.radarScores) appData.radarScores = [0, 0, 0, 0];
-        appData.terms.forEach(t => {
-            if (!t.category) t.category = 'Other';
-        });
+        if (!appData.clfProgress) appData.clfProgress = {};
+        appData.terms.forEach(t => { if (!t.category) t.category = 'Other'; });
     }
     updateStreak();
     saveData();
@@ -70,40 +87,23 @@ document.querySelectorAll('.nav-links li').forEach(link => {
         if (targetId === 'logs') renderChart();
         if (targetId === 'settings') renderSettings();
         if (targetId === 'quiz') resetQuizUI(); // クイズ画面を開いた時はUIリセット
+        if (targetId === 'voice-coach') {
+            if (typeof stopSpeaking === 'function') stopSpeaking();
+            if (typeof initVoiceCoachWelcome === 'function') initVoiceCoachWelcome();
+        }
     });
 });
 
-// --- API通信用 共通モデル取得関数 ---
-async function getGeminiModel(apiKey) {
-    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-    const listRes = await fetch(listUrl);
-    if (!listRes.ok) {
-        const err = await listRes.json();
-        throw new Error('APIキーの認証に失敗しました。: ' + (err.error?.message || ''));
-    }
-    const listData = await listRes.json();
-    const models = listData.models || [];
-    const validModels = models.filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent') && m.name.includes('gemini'));
-    if (validModels.length === 0) throw new Error('利用可能なGeminiモデルが見つかりませんでした。');
-    
-    return validModels.find(m => m.name.includes('1.5-flash')) || 
-           validModels.find(m => m.name.includes('1.5-pro')) || 
-           validModels.find(m => m.name.includes('1.0-pro')) || validModels[0];
-}
-
 // --- 用語の自動解説＆カテゴリ判定 (JSON出力要求) ---
-async function generateExplanationWithGemini(term) {
-    if (!appData.settings.apiKey) throw new Error('設定画面でGemini API Keyを設定してください。');
+async function generateExplanationWithOpenAI(term) {
+    if (!appData.settings.apiKey) throw new Error('設定画面でOpenAI API Keyを設定してください。');
     const apiKey = appData.settings.apiKey;
 
     try {
-        const targetModel = await getGeminiModel(apiKey);
-        const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel.name}:generateContent?key=${apiKey}`;
-        
-        // JSON出力のためのプロンプト工夫
+        const url = 'https://api.openai.com/v1/chat/completions';
         const prompt = `あなたはAWS認定クラウドプラクティショナー試験の優秀な講師です。以下のAWS用語について解説し、さらに適切なカテゴリを分類してください。
 用語: ${term}
-以下のJSON形式のみで出力してください（マークダウンのコードブロックは不要です）：
+以下のJSON形式のみで出力してください：
 {
   "category": "Compute, Storage, Database, Network, Security, または Other から1つ選択",
   "explanation": "初学者向けに「どんなサービスか」「試験で問われやすいポイント」を簡潔に（200文字程度で、見出しや箇条書きを用いて）説明したもの"
@@ -111,19 +111,23 @@ async function generateExplanationWithGemini(term) {
 
         const response = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
             body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { responseMimeType: "application/json" } // JSON出力を強制
+                model: 'gpt-4o-mini',
+                messages: [{ role: 'user', content: prompt }],
+                response_format: { type: "json_object" }
             })
         });
 
-        if (!response.ok) throw new Error('API通信エラーが発生しました');
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error('API通信エラー: ' + (err.error?.message || ''));
+        }
         const data = await response.json();
-        let resultText = data.candidates[0].content.parts[0].text;
-        
-        // コードブロックが含まれている場合は除去
-        resultText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+        const resultText = data.choices[0].message.content.trim();
         return JSON.parse(resultText); // { category, explanation }
     } catch (error) {
         console.error(error);
@@ -153,7 +157,7 @@ btnAddTerm.addEventListener('click', async () => {
         let desc = "";
         let category = "Other";
         if (appData.settings.apiKey) {
-            const aiResult = await generateExplanationWithGemini(name);
+            const aiResult = await generateExplanationWithOpenAI(name);
             desc = aiResult.explanation;
             category = aiResult.category;
         } else {
@@ -288,6 +292,74 @@ function renderDashboard() {
             reviewList.appendChild(div);
         });
     }
+
+    renderCLFChecklist();
+    renderDailyGoal();
+    generateDailyCoachAdvice();
+}
+
+function renderCLFChecklist() {
+    const container = document.getElementById('clf-checklist-content');
+    if (!container) return;
+    container.innerHTML = '';
+    CLF_DOMAINS.forEach(domain => {
+        const checked = appData.clfProgress[domain.id] || {};
+        const total = domain.topics.length;
+        const done = domain.topics.filter((_, i) => checked[i]).length;
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+        const section = document.createElement('div');
+        section.className = 'clf-domain';
+        section.innerHTML = `
+            <div class="clf-domain-header">
+                <span style="color:${domain.color}; font-weight:bold;">${domain.label}</span>
+                <span class="clf-pct-badge" style="border-color:${domain.color}; color:${domain.color};">出題 ${domain.pct}</span>
+                <span class="clf-progress-text">${done}/${total}</span>
+            </div>
+            <div class="clf-mini-bar-wrap"><div class="clf-mini-bar" style="width:${pct}%; background:${domain.color};"></div></div>
+            <ul class="clf-topic-list">
+                ${domain.topics.map((topic, i) => `
+                <li>
+                    <label>
+                        <input type="checkbox" data-domain="${domain.id}" data-idx="${i}" ${checked[i] ? 'checked' : ''}>
+                        <span style="${checked[i] ? 'text-decoration:line-through; color:var(--text-muted);' : ''}">${topic}</span>
+                    </label>
+                </li>`).join('')}
+            </ul>
+        `;
+        container.appendChild(section);
+    });
+
+    container.querySelectorAll('input[data-domain]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const domainId = cb.dataset.domain;
+            const idx = cb.dataset.idx;
+            if (!appData.clfProgress[domainId]) appData.clfProgress[domainId] = {};
+            appData.clfProgress[domainId][idx] = cb.checked;
+            saveData();
+            renderCLFChecklist();
+        });
+    });
+}
+
+function renderDailyGoal() {
+    const today = new Date().toISOString().split('T')[0];
+    const todayTerms = appData.terms.filter(t => t.createdAt && t.createdAt.startsWith(today)).length;
+    const goal = appData.settings.dailyGoal || 3;
+    const pct = Math.min(100, Math.round((todayTerms / goal) * 100));
+
+    const todayEl = document.getElementById('goal-today-terms');
+    const targetEl = document.getElementById('goal-target-terms');
+    const barEl = document.getElementById('goal-bar');
+    const inputEl = document.getElementById('daily-goal-input');
+
+    if (todayEl) todayEl.textContent = todayTerms;
+    if (targetEl) targetEl.textContent = goal;
+    if (barEl) {
+        barEl.style.width = pct + '%';
+        barEl.style.background = pct >= 100 ? 'var(--cyber-green)' : 'var(--cyber-blue)';
+    }
+    if (inputEl) inputEl.value = goal;
 }
 
 // --- 学習ログ (Chart.js 折れ線＋レーダー＋棒グラフ) ---
@@ -421,7 +493,7 @@ function resetQuizUI() {
 }
 
 async function generateQuiz() {
-    if (!appData.settings.apiKey) return alert('設定画面でGemini API Keyを設定してください。');
+    if (!appData.settings.apiKey) return alert('設定画面でOpenAI API Keyを設定してください。');
     if (appData.terms.length < 3) return alert('クイズを生成するには、用語図鑑に最低3つ以上の用語を登録してください！');
 
     btnStartQuiz.style.display = 'none';
@@ -433,16 +505,14 @@ async function generateQuiz() {
     try {
         // 登録されている用語からランダムに1つピックアップ
         const targetTerm = appData.terms[Math.floor(Math.random() * appData.terms.length)];
-        
         const apiKey = appData.settings.apiKey;
-        const targetModel = await getGeminiModel(apiKey);
-        const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel.name}:generateContent?key=${apiKey}`;
+        const url = 'https://api.openai.com/v1/chat/completions';
         
         const prompt = `あなたはAWS認定クラウドプラクティショナー試験の問題作成者です。以下のAWS用語に関する「4択クイズ」を1問作成してください。
 対象用語: ${targetTerm.name}
 解説: ${targetTerm.desc}
 
-出力は以下のJSONフォーマットのみにしてください（コードブロックは不要です）:
+出力は以下のJSONフォーマットのみにしてください：
 {
   "question": "問題文（このサービスは何をするものか、などの問い）",
   "options": ["選択肢1", "選択肢2", "選択肢3", "選択肢4"],
@@ -452,16 +522,23 @@ async function generateQuiz() {
 
         const response = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
             body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { responseMimeType: "application/json" }
+                model: 'gpt-4o-mini',
+                messages: [{ role: 'user', content: prompt }],
+                response_format: { type: "json_object" }
             })
         });
 
-        if (!response.ok) throw new Error('APIエラーが発生しました');
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error('API通信エラー: ' + (err.error?.message || ''));
+        }
         const data = await response.json();
-        let resultText = data.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const resultText = data.choices[0].message.content.trim();
         const quizData = JSON.parse(resultText);
 
         renderQuiz(quizData);
@@ -513,13 +590,18 @@ btnStartQuiz.addEventListener('click', generateQuiz);
 btnNextQuiz.addEventListener('click', generateQuiz);
 
 
-// --- 学習タイマー機能 ---
+// --- 学習タイマー機能（ポモドーロ対応）---
 let timerInterval = null;
 let timerSeconds = 0;
+let pomodoroPhase = 'work'; // 'work' | 'break'
+const POMODORO_WORK = 25 * 60;
+const POMODORO_BREAK = 5 * 60;
 
 const timerDisplay = document.getElementById('study-timer');
 const btnTimerStart = document.getElementById('btn-timer-start');
 const btnTimerStop = document.getElementById('btn-timer-stop');
+const pomodoroModeCheck = document.getElementById('pomodoro-mode');
+const pomodoroBadge = document.getElementById('pomodoro-badge');
 
 function formatTime(totalSeconds) {
     const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
@@ -528,58 +610,532 @@ function formatTime(totalSeconds) {
     return `${h}:${m}:${s}`;
 }
 
-btnTimerStart.addEventListener('click', () => {
-    if (timerInterval) return;
-    btnTimerStart.disabled = true;
-    btnTimerStop.disabled = false;
-    timerInterval = setInterval(() => {
-        timerSeconds++;
-        timerDisplay.textContent = formatTime(timerSeconds);
-    }, 1000);
-});
+function isPomodoroMode() {
+    return pomodoroModeCheck && pomodoroModeCheck.checked;
+}
 
-btnTimerStop.addEventListener('click', () => {
-    if (!timerInterval) return;
-    clearInterval(timerInterval);
-    timerInterval = null;
-    
-    // 分単位に変換（1分未満でも学習したなら1分としてカウント）
-    const minutes = Math.ceil(timerSeconds / 60);
-    
-    if (minutes > 0) {
-        const today = new Date().toISOString().split('T')[0];
-        appData.studyTime[today] = (appData.studyTime[today] || 0) + minutes;
-        saveData();
-        renderChart();
-        alert(`本日の学習時間に ${minutes} 分追加しました！お疲れ様でした！`);
-    }
-    
-    timerSeconds = 0;
+function addStudyMinutes(minutes) {
+    if (minutes <= 0) return;
+    const today = new Date().toISOString().split('T')[0];
+    appData.studyTime[today] = (appData.studyTime[today] || 0) + minutes;
+    saveData();
+    renderChart();
+    generateDailyCoachAdvice(true);
+}
+
+function startPomodoroCycle() {
+    pomodoroPhase = 'work';
+    timerSeconds = POMODORO_WORK;
+    updatePomodoroBadge();
     timerDisplay.textContent = formatTime(timerSeconds);
-    btnTimerStart.disabled = false;
-    btnTimerStop.disabled = true;
-});
+
+    timerInterval = setInterval(() => {
+        timerSeconds--;
+        timerDisplay.textContent = formatTime(timerSeconds);
+
+        if (timerSeconds <= 0) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+            if (pomodoroPhase === 'work') {
+                addStudyMinutes(25);
+                pomodoroPhase = 'break';
+                timerSeconds = POMODORO_BREAK;
+                updatePomodoroBadge();
+                new Audio('data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAA').play().catch(() => {});
+                alert('🍅 25分集中お疲れ様！5分休憩しよう！');
+                timerInterval = setInterval(() => {
+                    timerSeconds--;
+                    timerDisplay.textContent = formatTime(timerSeconds);
+                    if (timerSeconds <= 0) {
+                        clearInterval(timerInterval);
+                        timerInterval = null;
+                        alert('✅ 休憩終了！次のポモドーロを始めよう！');
+                        resetTimerUI();
+                    }
+                }, 1000);
+            }
+        }
+    }, 1000);
+}
+
+function updatePomodoroBadge() {
+    if (!pomodoroBadge) return;
+    if (isPomodoroMode()) {
+        pomodoroBadge.classList.remove('hidden');
+        pomodoroBadge.textContent = pomodoroPhase === 'work' ? '🍅 FOCUS TIME - 25:00' : '☕ BREAK TIME - 5:00';
+        pomodoroBadge.style.color = pomodoroPhase === 'work' ? 'var(--cyber-blue)' : 'var(--cyber-green)';
+    } else {
+        pomodoroBadge.classList.add('hidden');
+    }
+}
+
+function resetTimerUI() {
+    timerSeconds = 0;
+    timerDisplay.textContent = '00:00:00';
+    if (btnTimerStart) { btnTimerStart.disabled = false; }
+    if (btnTimerStop) { btnTimerStop.disabled = true; }
+    if (pomodoroBadge) pomodoroBadge.classList.add('hidden');
+}
+
+if (btnTimerStart) {
+    btnTimerStart.addEventListener('click', () => {
+        if (timerInterval) return;
+        btnTimerStart.disabled = true;
+        btnTimerStop.disabled = false;
+
+        if (isPomodoroMode()) {
+            startPomodoroCycle();
+        } else {
+            timerSeconds = 0;
+            timerInterval = setInterval(() => {
+                timerSeconds++;
+                timerDisplay.textContent = formatTime(timerSeconds);
+            }, 1000);
+        }
+    });
+}
+
+if (btnTimerStop) {
+    btnTimerStop.addEventListener('click', () => {
+        if (!timerInterval) return;
+        clearInterval(timerInterval);
+        timerInterval = null;
+
+        if (!isPomodoroMode()) {
+            const minutes = Math.ceil(timerSeconds / 60);
+            if (minutes > 0) {
+                addStudyMinutes(minutes);
+                alert(`本日の学習時間に ${minutes} 分追加しました！お疲れ様でした！`);
+            }
+        } else {
+            if (pomodoroPhase === 'work') {
+                const minutes = Math.ceil((POMODORO_WORK - timerSeconds) / 60);
+                addStudyMinutes(minutes);
+            }
+            alert('ポモドーロを中断しました。');
+        }
+        resetTimerUI();
+    });
+}
+
+const btnSaveDailyGoal = document.getElementById('btn-save-daily-goal');
+if (btnSaveDailyGoal) {
+    btnSaveDailyGoal.addEventListener('click', () => {
+        const val = parseInt(document.getElementById('daily-goal-input').value);
+        if (!isNaN(val) && val >= 1) {
+            appData.settings.dailyGoal = val;
+            saveData();
+            renderDailyGoal();
+        }
+    });
+}
 
 
 // --- 設定画面 ---
 function renderSettings() {
-    document.getElementById('gemini-api-key').value = appData.settings.apiKey;
-    document.getElementById('exam-date').value = appData.settings.examDate;
+    document.getElementById('openai-api-key').value = appData.settings.apiKey || '';
+    document.getElementById('exam-date').value = appData.settings.examDate || '';
 }
 
 document.getElementById('btn-save-settings').addEventListener('click', () => {
-    appData.settings.apiKey = document.getElementById('gemini-api-key').value.trim();
+    appData.settings.apiKey = document.getElementById('openai-api-key').value.trim();
     appData.settings.examDate = document.getElementById('exam-date').value;
     saveData();
+    
+    // 設定変更に伴い講師のアドバイスを更新
+    generateDailyCoachAdvice(true);
     
     const msg = document.getElementById('settings-msg');
     msg.classList.remove('hidden');
     setTimeout(() => msg.classList.add('hidden'), 3000);
 });
 
+// --- AIボイスコーチ機能 (Web Speech API + OpenAI) ---
+let recognition = null;
+let coachUtterance = null;
+let voiceCoachHistory = [];
+
+const chatLog = document.getElementById('chat-log');
+const btnMic = document.getElementById('btn-mic');
+const btnStopSpeak = document.getElementById('btn-stop-speak');
+const voiceTextInput = document.getElementById('voice-text-input');
+const btnSendVoiceText = document.getElementById('btn-send-voice-text');
+const muteVoiceCheckbox = document.getElementById('mute-voice');
+const autoMicCheckbox = document.getElementById('auto-mic');
+const avatarWrapper = document.getElementById('avatar-wrapper');
+const coachStatus = document.getElementById('coach-status');
+
+// Web Speech API の音声認識の初期化
+function initSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        console.warn('このブラウザは音声認識をサポートしていません。');
+        return null;
+    }
+    const rec = new SpeechRecognition();
+    rec.lang = 'ja-JP';
+    rec.continuous = false;
+    rec.interimResults = false;
+
+    rec.onstart = () => {
+        avatarWrapper.classList.add('listening');
+        avatarWrapper.classList.remove('speaking');
+        btnMic.classList.add('recording');
+        btnMic.innerHTML = '<i class="fa-solid fa-microphone-slash"></i> 聞き取り中...';
+        coachStatus.textContent = '聞き取り中... 話しかけてください';
+    };
+
+    rec.onend = () => {
+        avatarWrapper.classList.remove('listening');
+        btnMic.classList.remove('recording');
+        btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
+        if (coachStatus.textContent === '聞き取り中... 話しかけてください') {
+            coachStatus.textContent = '待機中';
+        }
+    };
+
+    rec.onerror = (e) => {
+        console.error('音声認識エラー:', e.error);
+        coachStatus.textContent = 'エラーが発生しました';
+        avatarWrapper.classList.remove('listening');
+        btnMic.classList.remove('recording');
+        btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
+    };
+
+    rec.onresult = (event) => {
+        const text = event.results[0][0].transcript;
+        if (text.trim()) {
+            sendUserMessage(text);
+        }
+    };
+
+    return rec;
+}
+
+// AIコーチの音声発話 (TTS)
+function speakText(text) {
+    window.speechSynthesis.cancel(); // 進行中の発話をキャンセル
+
+    if (muteVoiceCheckbox.checked) {
+        // ミュート状態の場合は、話し終わった後の自動マイクオンのみ実行
+        setTimeout(() => {
+            if (autoMicCheckbox.checked && recognition) {
+                try { recognition.start(); } catch (e) { console.warn(e); }
+            }
+        }, 1000);
+        return;
+    }
+
+    avatarWrapper.classList.add('speaking');
+    avatarWrapper.classList.remove('listening');
+    coachStatus.textContent = '発話中...';
+
+    coachUtterance = new SpeechSynthesisUtterance(text);
+    coachUtterance.lang = 'ja-JP';
+    
+    // 日本語の自然な音声を探す（あれば設定）
+    const voices = window.speechSynthesis.getVoices();
+    const jaVoice = voices.find(v => v.lang === 'ja-JP' || v.lang.includes('ja'));
+    if (jaVoice) coachUtterance.voice = jaVoice;
+
+    coachUtterance.onend = () => {
+        avatarWrapper.classList.remove('speaking');
+        coachStatus.textContent = '待機中';
+        // 発話終了後に自動マイク起動チェック
+        if (autoMicCheckbox.checked && recognition) {
+            try { recognition.start(); } catch (e) { console.warn(e); }
+        }
+    };
+
+    coachUtterance.onerror = () => {
+        avatarWrapper.classList.remove('speaking');
+        coachStatus.textContent = '待機中';
+    };
+
+    window.speechSynthesis.speak(coachUtterance);
+}
+
+// 発話の強制停止
+function stopSpeaking() {
+    window.speechSynthesis.cancel();
+    avatarWrapper.classList.remove('speaking');
+    coachStatus.textContent = '待機中';
+}
+
+// 学習状況の要約情報をプロンプト用に取得
+function getStudyStatsContext() {
+    // 登録用語数
+    const termsCount = appData.terms.length;
+    // ストリーク日数
+    const streakCount = appData.streak.count;
+    
+    // 直近7日間の学習時間
+    let weeklyStudyMinutes = 0;
+    for (let i = 0; i < 7; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split('T')[0];
+        weeklyStudyMinutes += appData.studyTime[dateStr] || 0;
+    }
+
+    // 直近の模試スコア
+    let latestScore = '未受検';
+    for (let i = 5; i >= 0; i--) {
+        if (appData.scores[i] !== null) {
+            latestScore = `${appData.scores[i]}点`;
+            break;
+        }
+    }
+
+    // 分野別スコア
+    const radarData = `クラウドの概念:${appData.radarScores[0]}%, セキュリティ:${appData.radarScores[1]}%, テクノロジー:${appData.radarScores[2]}%, 請求と料金:${appData.radarScores[3]}%`;
+
+    // 試験日カウントダウン
+    let countdownText = '未設定';
+    if (appData.settings.examDate) {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const diffDays = Math.ceil((new Date(appData.settings.examDate) - today) / 86400000);
+        countdownText = diffDays > 0 ? `あと ${diffDays} 日` : (diffDays === 0 ? "本日が試験日" : "試験日経過");
+    }
+
+    return `
+【ユーザーの学習データ】
+- 試験予定日: ${appData.settings.examDate || '未設定'} (${countdownText})
+- 継続ログイン日数（ストリーク）: ${streakCount}日
+- 登録されたAWS用語数: ${termsCount}個
+- 直近7日間の合計学習時間: ${weeklyStudyMinutes}分
+- 最近の模試の最高得点: ${latestScore}
+- 分野別理解度: ${radarData}
+`;
+}
+
+// チャットログにメッセージを追加
+function addMessageToLog(sender, text, isUser = false) {
+    const msgDiv = document.createElement('div');
+    msgDiv.className = `message ${isUser ? 'user-msg' : 'coach-msg'}`;
+    
+    const senderName = isUser ? 'YOU' : 'COACH';
+    const icon = isUser ? '<i class="fa-solid fa-user"></i>' : '<i class="fa-solid fa-robot"></i>';
+    
+    msgDiv.innerHTML = `
+        <span class="sender">${icon} ${senderName}:</span>
+        <span class="text">${text}</span>
+    `;
+    chatLog.appendChild(msgDiv);
+    chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+// ユーザーからの発言を処理し、OpenAIにAPIリクエストを送る
+async function sendUserMessage(text) {
+    if (!text.trim()) return;
+    
+    // UI表示
+    addMessageToLog('YOU', text, true);
+    voiceTextInput.value = '';
+
+    if (!appData.settings.apiKey) {
+        const errMsg = '設定画面でOpenAI API Keyを設定してください。';
+        addMessageToLog('COACH', errMsg);
+        speakText(errMsg);
+        return;
+    }
+
+    // 一時的な思考ステータス
+    coachStatus.textContent = '思考中...';
+    
+    try {
+        const apiKey = appData.settings.apiKey;
+        const url = 'https://api.openai.com/v1/chat/completions';
+        
+        // 講師のキャラクターと学習コンテキストを設定
+        const systemPrompt = `あなたはAWS認定クラウドプラクティショナー(CLF)試験合格を目指すユーザーをサポートする、IT専門の個別指導塾の熱血で優しい講師（コーチ）です。
+ユーザーに寄り添い、モチベーションを高める回答をしてください。
+回答を生成する際は、以下の「ユーザーの学習データ」を必ず考慮し、データに基づいた具体的な学習アドバイスを織り交ぜてください。
+（例：学習時間が少なければ「少しでもタイマーを動かそう！」、用語数が少なければ「用語図鑑にAWSサービスを追加してみてね！」、特定の分野が低ければ「セキュリティについてクイズで復習しよう！」など）
+
+${getStudyStatsContext()}
+
+【回答のルール】
+- 親しみやすく、少し熱血で、ユーザーを応援する塾の先生口調（「〜だよ」「〜だね！」「一緒に頑張ろう！」など）で答えてください。
+- 音声合成（TTS）で読み上げるため、漢字の読み間違いが起こりにくい平易な日本語にしてください。
+- 読み上げ時間が長くなりすぎないよう、回答は「150文字から250文字程度」の短い段落にまとめてください。
+- マークダウンの箇条書きや複雑な記号は極力避け、プレーンなテキストで出力してください。`;
+
+        // チャット履歴の構築 (直近10往復)
+        const messages = [
+            { role: 'system', content: systemPrompt }
+        ];
+        
+        voiceCoachHistory.forEach(msg => {
+            messages.push({ role: msg.role, content: msg.content });
+        });
+        
+        messages.push({ role: 'user', content: text });
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: messages,
+                max_tokens: 300,
+                temperature: 0.7
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error?.message || 'API通信エラー');
+        }
+
+        const data = await response.json();
+        const reply = data.choices[0].message.content.trim();
+
+        // 履歴の更新
+        voiceCoachHistory.push({ role: 'user', content: text });
+        voiceCoachHistory.push({ role: 'assistant', content: reply });
+        if (voiceCoachHistory.length > 20) voiceCoachHistory.splice(0, 2); // 10往復分に制限
+
+        // UI表示＆発話
+        addMessageToLog('COACH', reply);
+        speakText(reply);
+
+    } catch (error) {
+        console.error(error);
+        const errMsg = 'すみません、通信が乱れてうまく考えがまとまりませんでした。もう一度話しかけてみてください！';
+        addMessageToLog('COACH', errMsg);
+        speakText(errMsg);
+    }
+}
+
+// 画面遷移時などの歓迎メッセージ
+function initVoiceCoachWelcome() {
+    chatLog.innerHTML = '';
+    const welcomeMsg = `こんにちは！個別指導塾のAWS専任コーチだよ。1.5ヶ月後の試験合格に向けて、僕が全力でサポートするからね！現在のストリークは${appData.streak.count}日、用語図鑑には${appData.terms.length}個登録されているよ。今日はどんなことを勉強した？何でも気軽に話しかけてね！`;
+    addMessageToLog('COACH', welcomeMsg);
+    speakText(welcomeMsg);
+}
+
+// --- AI個別塾講師のダッシュボードアドバイス機能 ---
+let lastAdviceStats = "";
+
+async function generateDailyCoachAdvice(force = false) {
+    const adviceContentEl = document.getElementById('coach-advice-content');
+    if (!adviceContentEl) return;
+
+    if (!appData.settings.apiKey) {
+        adviceContentEl.innerHTML = '<p class="text-muted">設定画面でOpenAI API Keyを設定してください。APIキーを設定すると、本日の学習進捗に応じたAI個別塾講師からのアドバイスがここに表示されます。</p>';
+        return;
+    }
+
+    // 学習データが前回から変わっていなければ、不要なAPI通信を避けるためにキャッシュを利用する（forceフラグ時は強制再生成）
+    const currentStats = getStudyStatsContext();
+    if (!force && lastAdviceStats === currentStats && adviceContentEl.innerHTML !== "" && !adviceContentEl.querySelector('.fa-spin')) {
+        return; 
+    }
+
+    adviceContentEl.innerHTML = '<p class="text-muted"><i class="fa-solid fa-circle-notch fa-spin"></i> AI個別塾講師が本日の学習データを分析し、アドバイスを生成中...</p>';
+
+    try {
+        const apiKey = appData.settings.apiKey;
+        const url = 'https://api.openai.com/v1/chat/completions';
+        
+        const prompt = `あなたはAWS認定クラウドプラクティショナー(CLF)の個別指導塾の講師です。
+以下の「ユーザーの現在の学習データ」を分析し、今日の学習に対する温かいフィードバック、激励の言葉、および今日やるべき具体的なアドバイス（2〜3文程度、150文字以内）を簡潔に述べてください。
+（例：タイマー時間が増えていたら「素晴らしい努力！」、用語図鑑が少なければ「今日中にあと2つ用語を登録しよう！」、特定の分野が低ければ「セキュリティについて復習しよう！」など）
+
+${currentStats}
+
+【回答ルール】
+- 親しみやすく熱血で、ユーザーを励ます先生の口調（「〜だよ」「〜だね！」など）にしてください。
+- 150文字以内で、要点を絞って簡潔に記述してください。
+- マークダウンの太字（**テキスト**）などを用いて、重要なポイントを際立たせてください。`;
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 250,
+                temperature: 0.7
+            })
+        });
+
+        if (!response.ok) throw new Error('API通信エラー');
+        const data = await response.json();
+        const advice = data.choices[0].message.content.trim();
+
+        adviceContentEl.innerHTML = `<div style="font-size: 0.95rem; line-height: 1.6;">${marked(advice)}</div>`;
+        lastAdviceStats = currentStats; // キャッシュ用ステータス更新
+    } catch (error) {
+        console.error(error);
+        adviceContentEl.innerHTML = '<p class="text-muted" style="color: var(--cyber-red);"><i class="fa-solid fa-triangle-exclamation"></i> アドバイスの生成に失敗しました。再分析ボタンを押すか、API設定を確認してください。</p>';
+    }
+}
+
+// 音声コーチ初期化
+function initVoiceCoach() {
+    recognition = initSpeechRecognition();
+
+    btnMic.addEventListener('click', () => {
+        if (!recognition) {
+            alert('お使いのブラウザは音声認識に対応していません。テキスト入力をご利用ください。');
+            return;
+        }
+        stopSpeaking();
+        try {
+            recognition.start();
+        } catch (e) {
+            // 既に起動している場合は停止
+            try { recognition.stop(); } catch (err) {}
+        }
+    });
+
+    btnStopSpeak.addEventListener('click', () => {
+        stopSpeaking();
+        if (recognition) {
+            try { recognition.stop(); } catch (err) {}
+        }
+    });
+
+    btnSendVoiceText.addEventListener('click', () => {
+        const text = voiceTextInput.value.trim();
+        if (text) {
+            stopSpeaking();
+            sendUserMessage(text);
+        }
+    });
+
+    voiceTextInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            const text = voiceTextInput.value.trim();
+            if (text) {
+                stopSpeaking();
+                sendUserMessage(text);
+            }
+        }
+    });
+
+    // 再分析ボタンのイベントハンドラ追加
+    const btnRefreshAdvice = document.getElementById('btn-refresh-advice');
+    if (btnRefreshAdvice) {
+        btnRefreshAdvice.addEventListener('click', () => {
+            generateDailyCoachAdvice(true);
+        });
+    }
+}
+
 // --- 初期化実行 ---
 document.addEventListener('DOMContentLoaded', () => {
     loadData();
     renderDashboard();
     renderDictionary();
+    initVoiceCoach();
 });
