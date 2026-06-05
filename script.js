@@ -86,12 +86,23 @@ document.querySelectorAll('.nav-links li').forEach(link => {
         if (targetId === 'dictionary') renderDictionary();
         if (targetId === 'logs') renderChart();
         if (targetId === 'settings') renderSettings();
-        if (targetId === 'quiz') resetQuizUI(); // クイズ画面を開いた時はUIリセット
+        if (targetId === 'quiz') resetQuizUI();
         if (targetId === 'voice-coach') {
-            if (typeof stopSpeaking === 'function') stopSpeaking();
             if (typeof initVoiceCoachWelcome === 'function') initVoiceCoachWelcome();
+        } else {
+            // 別タブに移動したら音声・録音を停止
+            if (typeof stopSpeaking === 'function') stopSpeaking();
+            if (typeof isRecording !== 'undefined' && isRecording && typeof stopRecording === 'function') stopRecording();
         }
     });
+});
+
+// ブラウザタブを離れたときも停止（別アプリに切り替えた場合など）
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (typeof stopSpeaking === 'function') stopSpeaking();
+        if (typeof isRecording !== 'undefined' && isRecording && typeof stopRecording === 'function') stopRecording();
+    }
 });
 
 // --- 用語の自動解説＆カテゴリ判定 (JSON出力要求) ---
@@ -814,12 +825,16 @@ async function startRecording() {
 // マイク録音停止
 function stopRecording() {
     if (!isRecording || !mediaRecorder) return;
-    mediaRecorder.stop();
     isRecording = false;
     avatarWrapper.classList.remove('listening');
     btnMic.classList.remove('recording');
     btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
     coachStatus.textContent = '文字起こし中...';
+    // データを確実にフラッシュしてから停止
+    try { mediaRecorder.requestData(); } catch(e) {}
+    setTimeout(() => {
+        try { mediaRecorder.stop(); } catch(e) { console.warn(e); }
+    }, 100);
 }
 
 // Whisper APIで文字起こし
@@ -855,11 +870,12 @@ async function transcribeWithWhisper(audioBlob, mimeType) {
             sendUserMessage(text);
         } else {
             coachStatus.textContent = '声が聞き取れなかった';
+            addMessageToLog('COACH', '声が聞き取れなかったみたい。もう少し大きな声で、マイクに近づいて話してみて！', false);
         }
     } catch (err) {
-        console.error(err);
-        addMessageToLog('COACH', `文字起こしエラー: ${err.message}`, false);
-        coachStatus.textContent = '待機中';
+        console.error('Whisperエラー:', err);
+        coachStatus.textContent = 'エラー';
+        addMessageToLog('COACH', `❌ 文字起こしエラー: ${err.message}`, false);
     }
 }
 
