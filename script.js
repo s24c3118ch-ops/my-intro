@@ -286,12 +286,6 @@ function renderDashboard() {
         countdownEl.innerText = "未設定";
     }
 
-    for (let i = 1; i <= 4; i++) {
-        const cb = document.getElementById(`ms${i}`);
-        cb.checked = appData.milestones[i-1];
-        cb.onchange = (e) => { appData.milestones[i-1] = e.target.checked; saveData(); };
-    }
-
     const reviewList = document.getElementById('review-list');
     reviewList.innerHTML = '';
     const termsToReview = appData.terms.filter(t => new Date(t.nextReviewDate) <= new Date());
