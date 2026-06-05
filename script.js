@@ -881,6 +881,7 @@ async function transcribeWithWhisper(audioBlob, mimeType) {
 
 // 再生中のAudioオブジェクト（停止用）
 let currentAudio = null;
+let ttsAbortController = null; // TTS通信キャンセル用
 
 // AIコーチの音声発話 - OpenAI TTS優先、フォールバックはブラウザTTS
 async function speakText(text) {
@@ -905,6 +906,11 @@ async function speakWithOpenAI(text) {
     avatarWrapper.classList.remove('listening');
     coachStatus.textContent = '発話中...';
 
+    // 前のTTS通信があればキャンセル
+    if (ttsAbortController) ttsAbortController.abort();
+    ttsAbortController = new AbortController();
+    const signal = ttsAbortController.signal;
+
     try {
         const response = await fetch('https://api.openai.com/v1/audio/speech', {
             method: 'POST',
@@ -915,9 +921,10 @@ async function speakWithOpenAI(text) {
             body: JSON.stringify({
                 model: 'tts-1',
                 input: text,
-                voice: 'nova',  // 自然な女性音声（日本語対応）
+                voice: 'nova',
                 speed: 1.1
-            })
+            }),
+            signal
         });
 
         if (!response.ok) throw new Error('TTS API error');
@@ -942,8 +949,8 @@ async function speakWithOpenAI(text) {
 
         await currentAudio.play();
     } catch (e) {
+        if (e.name === 'AbortError') return; // キャンセルは無視
         console.warn('OpenAI TTS失敗、ブラウザTTSにフォールバック:', e);
-        addMessageToLog('COACH', `⚠️ OpenAI音声エラー: ${e.message} → ブラウザ音声で代替します`);
         speakWithBrowser(text);
     }
 }
@@ -981,11 +988,10 @@ function speakWithBrowser(text) {
 
 // 発話の強制停止
 function stopSpeaking() {
+    // TTS通信中ならキャンセル
+    if (ttsAbortController) { ttsAbortController.abort(); ttsAbortController = null; }
     window.speechSynthesis.cancel();
-    if (currentAudio) {
-        currentAudio.pause();
-        currentAudio = null;
-    }
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
     if (avatarWrapper) avatarWrapper.classList.remove('speaking');
     if (coachStatus && !isRecording) coachStatus.textContent = '待機中';
 }
@@ -1136,10 +1142,12 @@ ${getStudyStatsContext()}
     }
 }
 
-// 画面遷移時などの歓迎メッセージ
+// 初回のみ歓迎メッセージ（チャット履歴は保持）
+let voiceCoachVisited = false;
 function initVoiceCoachWelcome() {
-    chatLog.innerHTML = '';
-    const welcomeMsg = `こんにちは！個別指導塾のAWS専任コーチだよ。1.5ヶ月後の試験合格に向けて、僕が全力でサポートするからね！現在のストリークは${appData.streak.count}日、用語図鑑には${appData.terms.length}個登録されているよ。今日はどんなことを勉強した？何でも気軽に話しかけてね！`;
+    if (voiceCoachVisited) return; // 2回目以降はチャット履歴を消さない
+    voiceCoachVisited = true;
+    const welcomeMsg = `こんにちは！AWS専任コーチだよ。試験合格に向けて全力でサポートするね！ストリーク${appData.streak.count}日、用語${appData.terms.length}個登録済み。今日何か質問ある？`;
     addMessageToLog('COACH', welcomeMsg);
     speakText(welcomeMsg);
 }
