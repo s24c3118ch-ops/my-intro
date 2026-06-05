@@ -828,13 +828,19 @@ function stopRecording() {
     isRecording = false;
     avatarWrapper.classList.remove('listening');
     btnMic.classList.remove('recording');
-    btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
+    btnMic.disabled = true;
+    btnMic.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> 文字起こし中...';
     coachStatus.textContent = '文字起こし中...';
-    // データを確実にフラッシュしてから停止
     try { mediaRecorder.requestData(); } catch(e) {}
     setTimeout(() => {
         try { mediaRecorder.stop(); } catch(e) { console.warn(e); }
     }, 100);
+}
+
+function resetMicButton() {
+    btnMic.disabled = false;
+    btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
+    btnMic.classList.remove('recording');
 }
 
 // Whisper APIで文字起こし
@@ -864,16 +870,18 @@ async function transcribeWithWhisper(audioBlob, mimeType) {
 
         const data = await response.json();
         const text = (data.text || '').trim();
+        resetMicButton();
         coachStatus.textContent = '待機中';
 
         if (text) {
             sendUserMessage(text);
         } else {
             coachStatus.textContent = '声が聞き取れなかった';
-            addMessageToLog('COACH', '声が聞き取れなかったみたい。もう少し大きな声で、マイクに近づいて話してみて！', false);
+            addMessageToLog('COACH', '声が聞き取れなかったみたい。もう少し大きな声で話してみて！', false);
         }
     } catch (err) {
         console.error('Whisperエラー:', err);
+        resetMicButton();
         coachStatus.textContent = 'エラー';
         addMessageToLog('COACH', `❌ 文字起こしエラー: ${err.message}`, false);
     }
@@ -888,9 +896,6 @@ async function speakText(text) {
     stopSpeaking();
 
     if (muteVoiceCheckbox && muteVoiceCheckbox.checked) {
-        setTimeout(() => {
-            if (autoMicCheckbox && autoMicCheckbox.checked) startRecording();
-        }, 500);
         return;
     }
 
@@ -939,6 +944,7 @@ async function speakWithOpenAI(text) {
             currentAudio = null;
             avatarWrapper.classList.remove('speaking');
             coachStatus.textContent = '待機中';
+            // 自動マイクONはチェックボックスが有効な場合のみ
             if (autoMicCheckbox && autoMicCheckbox.checked) startRecording();
         };
 
@@ -976,7 +982,6 @@ function speakWithBrowser(text) {
     coachUtterance.onend = () => {
         avatarWrapper.classList.remove('speaking');
         coachStatus.textContent = '待機中';
-        if (autoMicCheckbox && autoMicCheckbox.checked) startRecording();
     };
     coachUtterance.onerror = () => {
         avatarWrapper.classList.remove('speaking');
@@ -1145,9 +1150,12 @@ ${getStudyStatsContext()}
 // 初回のみ歓迎メッセージ（チャット履歴は保持）
 let voiceCoachVisited = false;
 function initVoiceCoachWelcome() {
-    if (voiceCoachVisited) return; // 2回目以降はチャット履歴を消さない
+    if (voiceCoachVisited) {
+        stopSpeaking(); // 戻ったとき余計な音声を止める
+        return;
+    }
     voiceCoachVisited = true;
-    const welcomeMsg = `こんにちは！AWS専任コーチだよ。試験合格に向けて全力でサポートするね！ストリーク${appData.streak.count}日、用語${appData.terms.length}個登録済み。今日何か質問ある？`;
+    const welcomeMsg = `こんにちは！AWS専任コーチだよ。試験合格に向けて全力でサポートするね！ストリーク${appData.streak.count}日、用語${appData.terms.length}個登録済み。何か質問ある？`;
     addMessageToLog('COACH', welcomeMsg);
     speakText(welcomeMsg);
 }
