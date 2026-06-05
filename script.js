@@ -769,6 +769,7 @@ let voiceCoachHistory = [];
 let mediaRecorder = null;
 let audioChunks = [];
 let isRecording = false;
+let isTranscribing = false;
 let micStream = null;
 
 const chatLog = document.getElementById('chat-log');
@@ -826,18 +827,22 @@ async function startRecording() {
 function stopRecording() {
     if (!isRecording || !mediaRecorder) return;
     isRecording = false;
+    isTranscribing = true;
     avatarWrapper.classList.remove('listening');
     btnMic.classList.remove('recording');
-    btnMic.disabled = true;
     btnMic.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> 文字起こし中...';
     coachStatus.textContent = '文字起こし中...';
     try { mediaRecorder.requestData(); } catch(e) {}
     setTimeout(() => {
-        try { mediaRecorder.stop(); } catch(e) { console.warn(e); }
+        try { mediaRecorder.stop(); } catch(e) {
+            console.warn(e);
+            resetMicButton(); // stopが失敗してもリセット
+        }
     }, 100);
 }
 
 function resetMicButton() {
+    isTranscribing = false;
     btnMic.disabled = false;
     btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
     btnMic.classList.remove('recording');
@@ -1223,7 +1228,10 @@ ${currentStats}
 
 // 音声コーチ初期化
 function initVoiceCoach() {
+    resetMicButton(); // 初期化時に確実にリセット
+
     btnMic.addEventListener('click', () => {
+        if (isTranscribing) return; // 文字起こし中は無視
         stopSpeaking();
         if (isRecording) {
             stopRecording();
