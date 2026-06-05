@@ -752,10 +752,13 @@ document.getElementById('btn-save-settings').addEventListener('click', () => {
     setTimeout(() => msg.classList.add('hidden'), 3000);
 });
 
-// --- AIボイスコーチ機能 (Web Speech API + OpenAI) ---
-let recognition = null;
+// --- AIボイスコーチ機能 (MediaRecorder + Whisper + OpenAI TTS) ---
 let coachUtterance = null;
 let voiceCoachHistory = [];
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let micStream = null;
 
 const chatLog = document.getElementById('chat-log');
 const btnMic = document.getElementById('btn-mic');
@@ -767,58 +770,97 @@ const autoMicCheckbox = document.getElementById('auto-mic');
 const avatarWrapper = document.getElementById('avatar-wrapper');
 const coachStatus = document.getElementById('coach-status');
 
-// Web Speech API の音声認識の初期化
-function initSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-        console.warn('このブラウザは音声認識をサポートしていません。');
-        return null;
-    }
-    const rec = new SpeechRecognition();
-    rec.lang = 'ja-JP';
-    rec.continuous = false;
-    rec.interimResults = false;
+// マイク録音開始
+async function startRecording() {
+    if (isRecording) return;
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunks = [];
 
-    rec.onstart = () => {
+        // webm対応チェック（Safariはmp4）
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+        mediaRecorder = new MediaRecorder(micStream, { mimeType });
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+            micStream.getTracks().forEach(t => t.stop());
+            micStream = null;
+            const blob = new Blob(audioChunks, { type: mimeType });
+            await transcribeWithWhisper(blob, mimeType);
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+
         avatarWrapper.classList.add('listening');
         avatarWrapper.classList.remove('speaking');
         btnMic.classList.add('recording');
-        btnMic.innerHTML = '<i class="fa-solid fa-microphone-slash"></i> 聞き取り中...';
-        coachStatus.textContent = '聞き取り中... 話しかけてください';
-    };
-
-    rec.onend = () => {
-        avatarWrapper.classList.remove('listening');
-        btnMic.classList.remove('recording');
-        btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
-        if (coachStatus.textContent === '聞き取り中... 話しかけてください') {
-            coachStatus.textContent = '待機中';
-        }
-    };
-
-    rec.onerror = (e) => {
-        console.error('音声認識エラー:', e.error);
-        avatarWrapper.classList.remove('listening');
-        btnMic.classList.remove('recording');
-        btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
-        if (e.error === 'not-allowed') {
-            coachStatus.textContent = 'マイクが許可されていません';
-            addMessageToLog('COACH', '⚠️ マイクへのアクセスが許可されていません。ブラウザのアドレスバー横の🔒アイコンをクリックして「マイク」を許可してください。または、下のテキスト入力欄から文字で話しかけてね！');
-        } else if (e.error === 'no-speech') {
-            coachStatus.textContent = '声が聞き取れませんでした';
+        btnMic.innerHTML = '<i class="fa-solid fa-stop"></i> 停止して送信';
+        coachStatus.textContent = '🔴 録音中... もう一度押すと送信';
+    } catch (err) {
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            addMessageToLog('COACH', '⚠️ マイクが許可されていないよ！Chromeのアドレスバー左のアイコン（🔒か⚙️）をクリックして、マイクを「許可」にしてね。それまではテキスト入力欄から話しかけてね！', false);
+            coachStatus.textContent = 'マイク未許可';
         } else {
-            coachStatus.textContent = `エラー: ${e.error}`;
+            addMessageToLog('COACH', `マイクエラー: ${err.message}`, false);
+            coachStatus.textContent = 'エラー';
         }
-    };
+    }
+}
 
-    rec.onresult = (event) => {
-        const text = event.results[0][0].transcript;
-        if (text.trim()) {
+// マイク録音停止
+function stopRecording() {
+    if (!isRecording || !mediaRecorder) return;
+    mediaRecorder.stop();
+    isRecording = false;
+    avatarWrapper.classList.remove('listening');
+    btnMic.classList.remove('recording');
+    btnMic.innerHTML = '<i class="fa-solid fa-microphone"></i> 話しかける';
+    coachStatus.textContent = '文字起こし中...';
+}
+
+// Whisper APIで文字起こし
+async function transcribeWithWhisper(audioBlob, mimeType) {
+    if (!appData.settings.apiKey) {
+        addMessageToLog('COACH', 'APIキーが未設定です。設定タブから登録してね！', false);
+        coachStatus.textContent = '待機中';
+        return;
+    }
+    try {
+        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        const formData = new FormData();
+        formData.append('file', audioBlob, `audio.${ext}`);
+        formData.append('model', 'whisper-1');
+        formData.append('language', 'ja');
+
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${appData.settings.apiKey}` },
+            body: formData
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error?.message || 'Whisper error');
+        }
+
+        const data = await response.json();
+        const text = (data.text || '').trim();
+        coachStatus.textContent = '待機中';
+
+        if (text) {
             sendUserMessage(text);
+        } else {
+            coachStatus.textContent = '声が聞き取れなかった';
         }
-    };
-
-    return rec;
+    } catch (err) {
+        console.error(err);
+        addMessageToLog('COACH', `文字起こしエラー: ${err.message}`, false);
+        coachStatus.textContent = '待機中';
+    }
 }
 
 // 再生中のAudioオブジェクト（停止用）
@@ -830,9 +872,7 @@ async function speakText(text) {
 
     if (muteVoiceCheckbox && muteVoiceCheckbox.checked) {
         setTimeout(() => {
-            if (autoMicCheckbox && autoMicCheckbox.checked && recognition) {
-                try { recognition.start(); } catch (e) {}
-            }
+            if (autoMicCheckbox && autoMicCheckbox.checked) startRecording();
         }, 500);
         return;
     }
@@ -876,9 +916,7 @@ async function speakWithOpenAI(text) {
             currentAudio = null;
             avatarWrapper.classList.remove('speaking');
             coachStatus.textContent = '待機中';
-            if (autoMicCheckbox && autoMicCheckbox.checked && recognition) {
-                try { recognition.start(); } catch (e) {}
-            }
+            if (autoMicCheckbox && autoMicCheckbox.checked) startRecording();
         };
 
         currentAudio.onerror = () => {
@@ -915,9 +953,7 @@ function speakWithBrowser(text) {
     coachUtterance.onend = () => {
         avatarWrapper.classList.remove('speaking');
         coachStatus.textContent = '待機中';
-        if (autoMicCheckbox && autoMicCheckbox.checked && recognition) {
-            try { recognition.start(); } catch (e) {}
-        }
+        if (autoMicCheckbox && autoMicCheckbox.checked) startRecording();
     };
     coachUtterance.onerror = () => {
         avatarWrapper.classList.remove('speaking');
@@ -935,7 +971,7 @@ function stopSpeaking() {
         currentAudio = null;
     }
     if (avatarWrapper) avatarWrapper.classList.remove('speaking');
-    if (coachStatus) coachStatus.textContent = '待機中';
+    if (coachStatus && !isRecording) coachStatus.textContent = '待機中';
 }
 
 // 学習状況の要約情報をプロンプト用に取得
@@ -1155,40 +1191,18 @@ ${currentStats}
 
 // 音声コーチ初期化
 function initVoiceCoach() {
-    recognition = initSpeechRecognition();
-
-    btnMic.addEventListener('click', async () => {
-        if (!recognition) {
-            alert('お使いのブラウザは音声認識に対応していません。テキスト入力をご利用ください。');
-            return;
-        }
+    btnMic.addEventListener('click', () => {
         stopSpeaking();
-
-        // まずマイク許可を明示的にリクエスト（ダイアログが出る）
-        try {
-            await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch (err) {
-            if (err.name === 'NotAllowedError') {
-                coachStatus.textContent = 'マイクがブロックされています';
-                addMessageToLog('COACH', '⚠️ マイクへのアクセスが拒否されました。Chromeのアドレスバー左端のアイコンをクリックして、マイクを「許可」に変更してください。それまではテキスト入力を使ってね！');
-            } else {
-                addMessageToLog('COACH', 'マイクの取得に失敗しました: ' + err.message);
-            }
-            return;
-        }
-
-        try {
-            recognition.start();
-        } catch (e) {
-            try { recognition.stop(); } catch (err) {}
+        if (isRecording) {
+            stopRecording();
+        } else {
+            startRecording();
         }
     });
 
     btnStopSpeak.addEventListener('click', () => {
         stopSpeaking();
-        if (recognition) {
-            try { recognition.stop(); } catch (err) {}
-        }
+        if (isRecording) stopRecording();
     });
 
     btnSendVoiceText.addEventListener('click', () => {
